@@ -2,11 +2,16 @@
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
 import pandas as pd
-import os
+import os, glob
 
 DIR = os.path.dirname(os.path.abspath(__file__))
-XLSX = os.path.join(DIR, 'US Open Pool Rosters 2026.xlsx')
+# Pick the most recently modified rosters workbook so newly added rosters
+# (e.g. "... 2026 (1).xlsx") are used automatically. Skip Excel ~$ temp files.
+_candidates = [f for f in glob.glob(os.path.join(DIR, 'US Open Pool Rosters 2026*.xlsx'))
+               if not os.path.basename(f).startswith('~$')]
+XLSX = max(_candidates, key=os.path.getmtime)
 OUT = os.path.join(DIR, 'rosters.csv')
+print(f"Using rosters file: {os.path.basename(XLSX)}")
 
 # The 21 amateurs bundled into the all-or-nothing $0.25 Amateur Pod (from the entry sheet).
 AMATEUR_POD = [
