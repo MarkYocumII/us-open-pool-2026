@@ -714,13 +714,6 @@ def main():
         st.markdown(f"**Rank {rank_str}** — {len(detail_df)} golfers — **{total} points**")
         golf_dataframe(detail_df, use_container_width=True, hide_index=True)
 
-    # FEDEX CUP SEASON STANDINGS (Masters + PGA + live US Open)
-    st.markdown("---")
-    try:
-        render_fedex_cup(df_scores)
-    except Exception as e:
-        st.error(f"FedEx Cup standings failed to render: {e}")
-
     # TOURNAMENT LEADERBOARD + OWNERSHIP
     st.markdown("---")
     st.markdown("### ⛳ US Open Leaderboard & Ownership (Full Field)")
@@ -797,6 +790,13 @@ def main():
         value_picks.sort(key=lambda x: x["Pts/$"], reverse=True)
         vp_df = force_numeric_cols(pd.DataFrame(value_picks[:12]))
         golf_dataframe(vp_df, use_container_width=True, hide_index=True)
+
+    # FEDEX CUP SEASON STANDINGS (Masters + PGA + live US Open) — bottom of page
+    st.markdown("---")
+    try:
+        render_fedex_cup(df_scores)
+    except Exception as e:
+        st.error(f"FedEx Cup standings failed to render: {e}")
 
     st.markdown("---")
     st.caption("US Open Pool 2026 | Scoring: W=90, 2nd=65, 3rd=60, 4th=55, 5th=50, 6-10=45-25, 11-15=20, 16-20=15, 21-25=10, 26-30=5, 31+=2, MC=0")
