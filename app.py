@@ -21,6 +21,15 @@ ROSTER_PATH = os.path.join(DIR, "rosters.csv")
 # US Open cut = low 60 and ties (USGA), vs top 70 at the PGA Championship.
 CUT_TOP_N = 60
 
+# The 21 amateurs bundled into the $0.25 Amateur Pod — tagged "(a)" on the leaderboard.
+AMATEUR_POD = [
+    "Jackson Koivun", "Preston Stout", "Ethan Fang", "Arni Sveinsson", "Ryder Cowan",
+    "Miles Russell", "Mason Howell", "Eric Lee", "Logan Reilly", "Jackson Herrington",
+    "Bryan Lee", "Mateo Pulcini", "Jackson Ormond", "Chase Kyes", "Matt Robles",
+    "Marek Fleming", "Vaughn Harber", "Hamilton Coleman", "Brandon Holtz",
+    "Guiseppe Puebla", "Jack Schoenberg",
+]
+
 
 # === SCORING (identical rubric to the entry sheet) ===
 def points_for_position(pos, status=None):
@@ -78,6 +87,9 @@ ALIASES = {
 def resolve_name(name):
     n = norm(name)
     return ALIASES.get(n, n)
+
+
+AMATEUR_NORMS = {resolve_name(n) for n in AMATEUR_POD}
 
 
 # === FORMAT HELPERS ===
@@ -757,9 +769,14 @@ def main():
 
     # Map displayed row position -> live golfer norm (for the click callback) and
     # build the per-row highlight mask from the active participant's golfers.
+    # NOTE: compute these from the CLEAN names first so matching is unaffected.
     field_norms_in_order = [resolve_name(g) for g in combined_df["Golfer"].tolist()]
     ss["field_pos_to_golfernorm"] = field_norms_in_order
     field_highlight = [n in hl_golfernorms for n in field_norms_in_order]
+    # Tag Amateur Pod players with "(a)" — display only, after matching is set.
+    combined_df["Golfer"] = [f"{g} (a)" if n in AMATEUR_NORMS else g
+                             for g, n in zip(combined_df["Golfer"].tolist(), field_norms_in_order)]
+    st.caption("Amateurs (Amateur Pod) are marked **(a)**.")
     golf_dataframe(combined_df, use_container_width=True, hide_index=True,
                    key="field_tbl", on_select=on_field_select, highlight_rows=field_highlight)
 
