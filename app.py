@@ -110,7 +110,7 @@ def force_numeric_cols(df):
     return df
 
 
-def golf_dataframe(df, height=None, **kwargs):
+def golf_dataframe(df, height=None, key=None, on_select=None, highlight_rows=None, **kwargs):
     display = df.copy()
     display = display[[c for c in display.columns if not c.startswith("_")]]
     for col in ["Score", "Points", "Pool Pts", "Own %", "Pts/$"]:
@@ -194,8 +194,21 @@ def golf_dataframe(df, height=None, **kwargs):
         elif col == "Own %": fmt[col] = _fmt_own_pct
 
     styled = display.style.format(fmt, na_rep="-", precision=0)
+
+    if highlight_rows is not None:
+        flags = list(highlight_rows)
+        def _hl(row):
+            on = row.name < len(flags) and flags[row.name]
+            css = "background-color: #ffe08a; font-weight: 700" if on else ""
+            return [css] * len(row)
+        styled = styled.apply(_hl, axis=1)
+
     kw = {**kwargs}
     if height: kw["height"] = height
+    if on_select is not None:
+        kw["key"] = key
+        kw["on_select"] = on_select
+        kw["selection_mode"] = "single-row"
     st.dataframe(styled, **kw)
 
 
@@ -430,14 +443,19 @@ def compute_pool_scores(rosters, golfers_live):
 
     participant_scores = []
     participant_details = {}
+    participant_to_live = {}   # participant -> set of live golfer name_norms they roster
+    live_to_participants = {}  # live golfer name_norm -> set of participants who roster them
 
     for participant, group in rosters.groupby("Participant"):
         total_pts = 0
         golfer_details = []
+        live_set = set()
         for _, row in group.iterrows():
             match = best_match(row["Golfer_Norm"])
             if match:
                 pts = match["points"]
+                live_set.add(match["name_norm"])
+                live_to_participants.setdefault(match["name_norm"], set()).add(participant)
                 golfer_details.append({
                     "Golfer": row["Golfer"], "Price": f"${row['Price']:.2f}",
                     "Position": match["pos_str"], "_pos_sort": match["pos_int"] or 999,
@@ -455,6 +473,7 @@ def compute_pool_scores(rosters, golfers_live):
                 })
             total_pts += golfer_details[-1]["Points"]
 
+        participant_to_live[participant] = live_set
         making_cut = sum(1 for g in golfer_details if not g.get("_proj_mc", False))
         participant_scores.append({
             "Participant": participant, "Points": total_pts,
@@ -479,7 +498,7 @@ def compute_pool_scores(rosters, golfers_live):
         pos = j + 1
         i = j
     df_scores.insert(0, "Rank", ranks)
-    return df_scores, participant_details
+    return df_scores, participant_details, participant_to_live, live_to_participants
 
 
 # === MAIN ===
@@ -506,7 +525,50 @@ def main():
 
     st.caption(f"**{event_info}** | Updated: {datetime.now(timezone.utc).strftime('%I:%M %p UTC')} | Auto-refreshes every 3 min{cut_str}")
 
-    df_scores, participant_details = compute_pool_scores(rosters, golfers_live)
+    df_scores, participant_details, participant_to_live, live_to_participants = compute_pool_scores(rosters, golfers_live)
+
+    # ---- Cross-highlight selection state ----
+    ss = st.session_state
+    ss.setdefault("hl_type", None)    # "participant" or "golfer"
+    ss.setdefault("hl_value", None)
+
+    def _sel_rows(key):
+        s = ss.get(key)
+        if not s:
+            return []
+        sel = getattr(s, "selection", None)
+        if sel is None and isinstance(s, dict):
+            sel = s.get("selection", {})
+        rows = getattr(sel, "rows", None)
+        if rows is None and isinstance(sel, dict):
+            rows = sel.get("rows", [])
+        return rows or []
+
+    def on_pool_select():
+        rows = _sel_rows("pool_tbl")
+        if rows:
+            ss.hl_type = "participant"
+            ss.hl_value = ss.get("pool_pos_to_participant", [])[rows[0]]
+
+    def on_field_select():
+        rows = _sel_rows("field_tbl")
+        if rows:
+            ss.hl_type = "golfer"
+            ss.hl_value = ss.get("field_pos_to_golfernorm", [])[rows[0]]
+
+    # Resolve the active highlight into participant- and golfer-sets for this render
+    hl_participants, hl_golfernorms, hl_label = set(), set(), None
+    if ss.hl_type == "participant" and ss.hl_value in participant_to_live:
+        hl_participants = {ss.hl_value}
+        hl_golfernorms = participant_to_live[ss.hl_value]
+        hl_label = (f"⛳ **{ss.hl_value}**'s golfers are highlighted in the field table below "
+                    f"({len(hl_golfernorms)} matched to the field).")
+    elif ss.hl_type == "golfer" and ss.hl_value:
+        hl_golfernorms = {ss.hl_value}
+        hl_participants = live_to_participants.get(ss.hl_value, set())
+        gname = next((g["name"] for g in golfers_live if g["name_norm"] == ss.hl_value), ss.hl_value)
+        hl_label = (f"👥 **{gname}** is rostered by **{len(hl_participants)}** participants — "
+                    f"highlighted in the pool leaderboard.")
 
     # PODIUM
     if len(df_scores) >= 3:
@@ -520,14 +582,34 @@ def main():
 
     # POOL LEADERBOARD + ROSTER DETAIL
     st.markdown("### 📊 Full Pool Leaderboard")
-    st.caption("Select a participant to view their roster below")
-    participant_list = df_scores["Participant"].tolist()
-    selected = st.selectbox("🔍 Find participant:", ["-- Show All --"] + participant_list)
+    st.caption("👉 **Click a participant row** to highlight their golfers in the field table below. "
+               "**Click a golfer** in the field table to highlight everyone who rostered them here.")
 
+    if ss.hl_type:
+        c1, c2 = st.columns([5, 1])
+        c1.info(hl_label)
+        if c2.button("✖ Clear", use_container_width=True):
+            ss.hl_type, ss.hl_value = None, None
+            st.rerun()
+
+    # Map displayed row position -> participant (for the click callback)
+    ss["pool_pos_to_participant"] = df_scores["Participant"].tolist()
+
+    def _style_pool(row):
+        on = row["Participant"] in hl_participants
+        css = "background-color: #ffe08a; font-weight: 700" if on else ""
+        return [css] * len(row)
+
+    pool_styled = df_scores.style.apply(_style_pool, axis=1)
     st.dataframe(
-        df_scores, use_container_width=True,
+        pool_styled, use_container_width=True,
         height=min(700, 35 * min(len(df_scores), 20) + 38), hide_index=True,
+        key="pool_tbl", on_select=on_pool_select, selection_mode="single-row",
     )
+
+    participant_list = df_scores["Participant"].tolist()
+    selected = st.selectbox("🔍 Or search a participant to view their full roster:",
+                            ["-- Show All --"] + participant_list)
 
     if selected and selected != "-- Show All --" and selected in participant_details:
         st.markdown("---")
@@ -579,7 +661,14 @@ def main():
         })
     combined_df = pd.DataFrame(combined_rows).sort_values(["#"]).drop(columns=["#"]).reset_index(drop=True)
     combined_df = force_numeric_cols(combined_df)
-    golf_dataframe(combined_df, use_container_width=True, hide_index=True)
+
+    # Map displayed row position -> live golfer norm (for the click callback) and
+    # build the per-row highlight mask from the active participant's golfers.
+    field_norms_in_order = [resolve_name(g) for g in combined_df["Golfer"].tolist()]
+    ss["field_pos_to_golfernorm"] = field_norms_in_order
+    field_highlight = [n in hl_golfernorms for n in field_norms_in_order]
+    golf_dataframe(combined_df, use_container_width=True, hide_index=True,
+                   key="field_tbl", on_select=on_field_select, highlight_rows=field_highlight)
 
     # BEST VALUE PICKS
     st.markdown("### 💰 Best Value Picks (Points per Dollar)")
