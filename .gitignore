@@ -4,6 +4,7 @@
 *.json
 optimize_us_open_roster.py
 build_us_open_workflow_doc.py
+reconstruct_prior_finals.py
 __pycache__/
 *.pyc
 st_boot.log

@@ -698,12 +698,13 @@ def main():
         vp_df = force_numeric_cols(pd.DataFrame(value_picks[:12]))
         golf_dataframe(vp_df, use_container_width=True, hide_index=True)
 
-    # OPTIONAL SEASON STANDINGS (Masters + PGA + US Open)
+    # FEDEX CUP SEASON STANDINGS (Masters + PGA + US Open)
     finals = load_prior_finals()
     if finals:
         st.markdown("---")
-        labels = " + ".join(list(finals.keys()) + ["US Open"])
-        st.markdown(f"### 🏆 Season Standings — {labels} 2026")
+        labels = " + ".join(list(finals.keys()) + ["US Open (live)"])
+        st.markdown("### 🏆 FedEx Cup Season Standings")
+        st.caption(f"Combined points across {labels} 2026. The US Open column is live and updates with the leaderboard above.")
         usopen_pts = df_scores.set_index("Participant")["Points"].to_dict()
         all_p = set(usopen_pts)
         for d in finals.values():
@@ -732,8 +733,8 @@ def main():
             if c not in ("Rank", "Participant"):
                 season_df[c] = season_df[c].astype("Int64")
         st.dataframe(season_df, use_container_width=True, hide_index=True,
-                     height=min(700, 35 * len(season_df) + 38))
-        st.caption("Combined points across 2026 majors. Dash = did not enter that tournament.")
+                     height=min(700, 35 * min(len(season_df), 20) + 38))
+        st.caption("Dash = did not enter that tournament. Masters & PGA are final; US Open updates live.")
 
     st.markdown("---")
     st.caption("US Open Pool 2026 | Scoring: W=90, 2nd=65, 3rd=60, 4th=55, 5th=50, 6-10=45-25, 11-15=20, 16-20=15, 21-25=10, 26-30=5, 31+=2, MC=0")
