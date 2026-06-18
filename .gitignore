@@ -1,0 +1,10 @@
+# Source spreadsheets / analysis artifacts — not needed by the deployed app
+*.xlsx
+*.docx
+*.json
+optimize_us_open_roster.py
+build_us_open_workflow_doc.py
+__pycache__/
+*.pyc
+st_boot.log
+.DS_Store
