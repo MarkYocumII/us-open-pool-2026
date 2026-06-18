@@ -403,20 +403,26 @@ def load_rosters():
 # === OPTIONAL SEASON STANDINGS ===
 # Drop prior-major finals here as CSVs with columns [Participant, Points] named
 # e.g. masters_final.csv, pga_final.csv — they'll roll up into season standings.
-@st.cache_data(ttl=3600)
 def load_prior_finals():
-    finals = {}
+    # Not cached: files are tiny, and caching risks serving a stale empty result
+    # from a build that predated the CSVs.
+    finals, diag = {}, []
     for fname, label in [("masters_final.csv", "Masters"), ("pga_final.csv", "PGA")]:
         path = os.path.join(DIR, fname)
-        if os.path.exists(path):
-            try:
-                d = pd.read_csv(path, encoding="utf-8")
-                pts_col = next((c for c in d.columns if c.lower().endswith("points") or c.lower() == "points"), None)
-                if "Participant" in d.columns and pts_col:
-                    finals[label] = dict(zip(d["Participant"], pd.to_numeric(d[pts_col], errors="coerce").fillna(0)))
-            except Exception:
-                pass
-    return finals
+        if not os.path.exists(path):
+            diag.append(f"{fname}: not found")
+            continue
+        try:
+            d = pd.read_csv(path, encoding="utf-8")
+            pts_col = next((c for c in d.columns if c.lower().endswith("points") or c.lower() == "points"), None)
+            if "Participant" in d.columns and pts_col:
+                finals[label] = dict(zip(d["Participant"], pd.to_numeric(d[pts_col], errors="coerce").fillna(0)))
+                diag.append(f"{fname}: {len(finals[label])} rows")
+            else:
+                diag.append(f"{fname}: missing Participant/Points columns ({list(d.columns)})")
+        except Exception as e:
+            diag.append(f"{fname}: error {e}")
+    return finals, diag
 
 
 # === COMPUTE SCORES ===
@@ -518,8 +524,10 @@ def _competition_ranks(participants, score_map):
 
 
 def render_fedex_cup(df_scores):
-    finals = load_prior_finals()
+    finals, diag = load_prior_finals()
+    st.markdown("### 🏆 FedEx Cup Season Standings")
     if not finals:
+        st.warning("Season standings data not loaded yet. Diagnostics: " + "; ".join(diag))
         return
     M = finals.get("Masters", {})
     P = finals.get("PGA", {})
@@ -561,20 +569,27 @@ def render_fedex_cup(df_scores):
     for c in ["Masters", "PGA", "US Open", "Total"]:
         season_df[c] = season_df[c].astype("Int64")
 
-    st.markdown("### 🏆 FedEx Cup Season Standings")
     labels = " + ".join(list(finals.keys()) + ["US Open (live)"])
     st.caption(f"Combined points across {labels} 2026. **Move** = season-rank change from the US Open "
                "(vs. Masters + PGA only). The US Open column and movement update live.")
 
-    def _color_move(val):
-        s = str(val)
-        if s.startswith("▲"): return "color: #1a7f37; font-weight: 700"
-        if s.startswith("▼"): return "color: #b91c1c; font-weight: 700"
-        if "NEW" in s:        return "color: #6b21a8; font-weight: 700"
-        return "color: #9aa0a6"
-    styled = season_df.style.map(_color_move, subset=["Move"]).format(na_rep="–", precision=0)
-    st.dataframe(styled, use_container_width=True, hide_index=True,
-                 height=min(760, 35 * min(len(season_df), 21) + 38))
+    def _color_move_col(col):
+        out = []
+        for val in col:
+            s = str(val)
+            if s.startswith("▲"): out.append("color: #1a7f37; font-weight: 700")
+            elif s.startswith("▼"): out.append("color: #b91c1c; font-weight: 700")
+            elif "NEW" in s: out.append("color: #6b21a8; font-weight: 700")
+            else: out.append("color: #9aa0a6")
+        return out
+    try:
+        styled = season_df.style.apply(_color_move_col, subset=["Move"]).format(na_rep="–", precision=0)
+        st.dataframe(styled, use_container_width=True, hide_index=True,
+                     height=min(760, 35 * min(len(season_df), 21) + 38))
+    except Exception:
+        # Fallback if Styler isn't supported in this environment
+        st.dataframe(season_df, use_container_width=True, hide_index=True,
+                     height=min(760, 35 * min(len(season_df), 21) + 38))
     st.caption("Dash = did not enter that tournament. Masters & PGA are final; US Open updates live.")
 
 
@@ -701,7 +716,10 @@ def main():
 
     # FEDEX CUP SEASON STANDINGS (Masters + PGA + live US Open)
     st.markdown("---")
-    render_fedex_cup(df_scores)
+    try:
+        render_fedex_cup(df_scores)
+    except Exception as e:
+        st.error(f"FedEx Cup standings failed to render: {e}")
 
     # TOURNAMENT LEADERBOARD + OWNERSHIP
     st.markdown("---")
