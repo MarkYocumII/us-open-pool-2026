@@ -225,37 +225,50 @@ def golf_dataframe(df, height=None, key=None, on_select=None, highlight_rows=Non
 
 
 # === FETCH LIVE LEADERBOARD ===
+ESPN_URL = "https://site.api.espn.com/apis/site/v2/sports/golf/pga/scoreboard"
+# Fallback window — ESPN's dated query reliably returns the US Open even when the
+# live (no-dates) scoreboard momentarily returns a malformed/empty event payload.
+US_OPEN_DATE_RANGE = "20260618-20260621"
+
+
+def _pick_event(data):
+    """Choose a usable event: prefer a US Open event that actually has competition
+    data; never return an event with an empty competitions array."""
+    events = data.get("events", []) or []
+    usable = [e for e in events if e.get("competitions")]
+    for e in usable:
+        nl = (e.get("name", "") or "").lower()
+        if "open" in nl or "usga" in nl:
+            return e
+    return usable[0] if usable else None
+
+
 @st.cache_data(ttl=180)
 def fetch_leaderboard():
-    url = "https://site.api.espn.com/apis/site/v2/sports/golf/pga/scoreboard"
     headers = {"User-Agent": "Mozilla/5.0"}
-    try:
-        r = requests.get(url, headers=headers, timeout=15)
+
+    def _get(u):
+        r = requests.get(u, headers=headers, timeout=15)
         r.raise_for_status()
-        data = r.json()
+        return r.json()
+
+    # Primary: live scoreboard. If ESPN returns junk (no usable event with
+    # competitions), retry with the dated query before giving up.
+    event = None
+    try:
+        event = _pick_event(_get(ESPN_URL))
+        if event is None:
+            event = _pick_event(_get(f"{ESPN_URL}?dates={US_OPEN_DATE_RANGE}"))
     except Exception as e:
         return None, str(e), None
 
+    if event is None:
+        return None, "Live tournament data from ESPN is briefly unavailable — it will refresh automatically.", None
+
     golfers = []
     try:
-        events = data.get("events", [])
-        if not events:
-            return None, "No events found in ESPN data", None
-
-        event = None
-        for ev in events:
-            nl = ev.get("name", "").lower()
-            if "open" in nl or "usga" in nl:
-                event = ev
-                break
-        if event is None:
-            event = events[0]
-
-        event_name = event.get("name", "Unknown Event")
+        event_name = event.get("name", "U.S. Open")
         competitions = event.get("competitions", [])
-        if not competitions:
-            return None, f"No competitions in event: {event_name}", None
-
         comp_obj = competitions[0]
         competitors = comp_obj.get("competitors", [])
 
