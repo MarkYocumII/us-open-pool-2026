@@ -357,14 +357,21 @@ def fetch_leaderboard():
             pos = j + 1
             i = j
 
+        # "In play" = still has golf to play right now (on the course or yet to tee
+        # off today) and not eliminated -> a participant's remaining scoring ammo.
+        FINAL_ROUND = 4
+        tournament_over = target_period > FINAL_ROUND
+
         for g in active:
+            thru = g["thru"]
+            in_play = (not tournament_over) and (thru is None or thru < 18)
             golfers.append({
                 "name": g["name"], "name_norm": g["name_norm"],
                 "pos_str": g["pos_str"], "pos_int": g["pos_int"],
                 "status": None, "score": g["score"], "today": g["today"],
                 "thru": g["thru"], "tee_time": g.get("tee_time", ""),
                 "points": points_for_position(g["pos_int"], None),
-                "proj_mc": False,
+                "proj_mc": False, "in_play": in_play,
             })
 
         for g in inactive:
@@ -374,7 +381,7 @@ def fetch_leaderboard():
                 "status": g["status"], "score": g["score"],
                 "today": g.get("today", "-"), "thru": g["thru"],
                 "tee_time": g.get("tee_time", ""),
-                "points": 0, "proj_mc": True,
+                "points": 0, "proj_mc": True, "in_play": False,
             })
     except Exception as e:
         return None, f"Parse error: {e}", None
@@ -478,6 +485,7 @@ def compute_pool_scores(rosters, golfers_live):
                     "Golfer": row["Golfer"], "Price": f"${row['Price']:.2f}",
                     "Position": match["pos_str"], "_pos_sort": match["pos_int"] or 999,
                     "_proj_mc": match.get("proj_mc", False),
+                    "_in_play": match.get("in_play", False),
                     "Score": score_to_int(match["score"]),
                     "Today": match.get("today", "-"), "Thru": match["thru"],
                     "tee_time": match.get("tee_time", ""), "Points": pts,
@@ -485,7 +493,7 @@ def compute_pool_scores(rosters, golfers_live):
             else:
                 golfer_details.append({
                     "Golfer": row["Golfer"], "Price": f"${row['Price']:.2f}",
-                    "Position": "-", "_pos_sort": 999, "_proj_mc": True,
+                    "Position": "-", "_pos_sort": 999, "_proj_mc": True, "_in_play": False,
                     "Score": score_to_int("-"), "Today": "-", "Thru": None,
                     "tee_time": "", "Points": 0,
                 })
@@ -493,9 +501,10 @@ def compute_pool_scores(rosters, golfers_live):
 
         participant_to_live[participant] = live_set
         making_cut = sum(1 for g in golfer_details if not g.get("_proj_mc", False))
+        live = sum(1 for g in golfer_details if g.get("_in_play", False))
         participant_scores.append({
             "Participant": participant, "Points": total_pts,
-            "Golfers": len(group), "Making Cut": making_cut,
+            "Golfers": len(group), "Making Cut": making_cut, "Live": live,
         })
         participant_details[participant] = sorted(
             golfer_details, key=lambda x: (-x["Points"], x["Score"] if x["Score"] is not None else 999, x["_pos_sort"]))
@@ -688,6 +697,8 @@ def main():
     st.markdown("### 📊 Full Pool Leaderboard")
     st.caption("👉 **Click a participant row** to highlight their golfers in the field table below. "
                "**Click a golfer** in the field table to highlight everyone who rostered them here.")
+    st.caption("**Live** = golfers still on the course or yet to tee off today — i.e. how much scoring "
+               "ammo a participant still has in play right now.")
 
     if ss.hl_type:
         c1, c2 = st.columns([5, 1])
