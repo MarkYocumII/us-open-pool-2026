@@ -614,6 +614,72 @@ def render_fedex_cup(df_scores):
     st.caption("Dash = did not enter that tournament. Masters & PGA are final; US Open updates live.")
 
 
+# === RIVALRY MODE (head-to-head "The Diff") ===
+def _fmt_thru_cell(t):
+    if t is None or (isinstance(t, float) and pd.isna(t)):
+        return "—"
+    t = int(t)
+    return "F" if t >= 18 else str(t)
+
+
+def render_rivalry(df_scores, participant_details):
+    st.markdown("### ⚔️ Rivalry Mode — Head-to-Head")
+    st.caption("Shared golfers cancel out — only each side's UNIQUE golfers move the margin. "
+               "⛳ = still in play (live ammo). Root for your column, against theirs.")
+
+    plist = df_scores["Participant"].tolist()
+    pts_map = df_scores.set_index("Participant")["Points"].to_dict()
+    rank_map = df_scores.set_index("Participant")["Rank"].to_dict()
+
+    c1, c2 = st.columns(2)
+    you = c1.selectbox("You", plist, index=0, key="rival_you")
+    opp = c2.selectbox("Opponent", plist, index=min(1, len(plist) - 1), key="rival_opp")
+    if you == opp:
+        st.info("Pick two different participants to compare.")
+        return
+
+    def nmap(name):
+        return {resolve_name(g["Golfer"]): g for g in participant_details.get(name, [])}
+    you_map, opp_map = nmap(you), nmap(opp)
+    shared = set(you_map) & set(opp_map)
+    you_uniq = [you_map[n] for n in (set(you_map) - set(opp_map))]
+    opp_uniq = [opp_map[n] for n in (set(opp_map) - set(you_map))]
+
+    you_uniq_pts = sum(g["Points"] for g in you_uniq)
+    opp_uniq_pts = sum(g["Points"] for g in opp_uniq)
+    you_live = sum(1 for g in you_uniq if g.get("_in_play"))
+    opp_live = sum(1 for g in opp_uniq if g.get("_in_play"))
+    margin = pts_map[you] - pts_map[opp]
+    leader = you if margin > 0 else (opp if margin < 0 else "Tied")
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric(f"{you}  (#{rank_map[you]})", f"{pts_map[you]} pts")
+    m2.metric("Margin", f"{margin:+d}", f"{leader} leads" if margin != 0 else "dead even",
+              delta_color="normal" if margin >= 0 else "inverse")
+    m3.metric(f"{opp}  (#{rank_map[opp]})", f"{pts_map[opp]} pts")
+
+    st.caption(f"They share **{len(shared)}** golfers (identical points for both — they don't move the margin). "
+               f"Unique ammo still live → **{you}: {you_live}**  ·  **{opp}: {opp_live}**.")
+
+    def side_df(uniq):
+        rows = [{
+            "Golfer": g["Golfer"] + ("  ⛳" if g.get("_in_play") else ""),
+            "Pos": g["Position"],
+            "Score": _fmt_golf_score(g["Score"]),
+            "Thru": _fmt_thru_cell(g["Thru"]),
+            "Pts": g["Points"],
+        } for g in uniq]
+        if not rows:
+            return pd.DataFrame(columns=["Golfer", "Pos", "Score", "Thru", "Pts"])
+        return pd.DataFrame(rows).sort_values("Pts", ascending=False).reset_index(drop=True)
+
+    l, r = st.columns(2)
+    l.markdown(f"**{you}'s edge** — {len(you_uniq)} unique · **{you_uniq_pts} pts**")
+    l.dataframe(side_df(you_uniq), use_container_width=True, hide_index=True, height=360)
+    r.markdown(f"**{opp}'s edge** — {len(opp_uniq)} unique · **{opp_uniq_pts} pts**")
+    r.dataframe(side_df(opp_uniq), use_container_width=True, hide_index=True, height=360)
+
+
 # === MAIN ===
 def main():
     st.markdown("# ⛳ US Open Pool 2026")
@@ -736,6 +802,13 @@ def main():
         st.markdown(f"### 🔎 {selected}")
         st.markdown(f"**Rank {rank_str}** — {len(detail_df)} golfers — **{total} points**")
         golf_dataframe(detail_df, use_container_width=True, hide_index=True)
+
+    # RIVALRY MODE (head-to-head)
+    st.markdown("---")
+    try:
+        render_rivalry(df_scores, participant_details)
+    except Exception as e:
+        st.error(f"Rivalry Mode failed to render: {e}")
 
     # TOURNAMENT LEADERBOARD + OWNERSHIP
     st.markdown("---")
