@@ -243,6 +243,26 @@ def _pick_event(data):
     return usable[0] if usable else None
 
 
+def _active_round(linescores):
+    """Pick a golfer's OWN current round for the Today/Thru display. During a
+    weather-split tournament the field is desynced (some players finishing R1
+    while others play R2), so a single global round is wrong for the out-of-phase
+    wave. Rules per golfer: if their furthest round with holes is still in
+    progress, show that; if it's complete, show the next round (tee-time stub or
+    in-progress) when one exists; if they haven't teed off at all, show the
+    earliest stub."""
+    if not linescores:
+        return None
+    played = [rd for rd in linescores if rd.get("linescores")]
+    if not played:
+        return linescores[0]
+    latest = max(played, key=lambda rd: rd.get("period", 0))
+    if len(latest.get("linescores", [])) >= 18:
+        nxt = next((rd for rd in linescores if rd.get("period", 0) == latest.get("period", 0) + 1), None)
+        return nxt if nxt is not None else latest
+    return latest
+
+
 @st.cache_data(ttl=180)
 def fetch_leaderboard():
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -310,13 +330,10 @@ def fetch_leaderboard():
                 if not has_post_cut_round:
                     status = "MC"
 
-            current_round = None
-            for rd in linescores:
-                if rd.get("period") == target_period:
-                    current_round = rd
-                    break
-            if current_round is None and linescores:
-                current_round = linescores[-1]
+            # Per-golfer current round (handles weather-split waves) rather than a
+            # single global round. The global target_period is still used above for
+            # the round-phase gates (MC detection, projected cut).
+            current_round = _active_round(linescores)
 
             if current_round:
                 hole_scores = current_round.get("linescores", [])
