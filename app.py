@@ -7,7 +7,7 @@ import unicodedata
 import os
 from datetime import datetime, timezone
 
-st.set_page_config(page_title="US Open Pool 2026", page_icon="⛳", layout="centered")
+st.set_page_config(page_title="US Open Pool 2026", page_icon="⛳", layout="wide")
 
 try:
     from streamlit_autorefresh import st_autorefresh
