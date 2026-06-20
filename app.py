@@ -379,8 +379,40 @@ def fetch_leaderboard():
                 "r2_total": r2_total, "weekend_holes": weekend_holes,
             })
 
-        active = [g for g in raw_golfers if g["status"] is None]
-        inactive = [g for g in raw_golfers if g["status"] is not None]
+        # === CUT (decided BEFORE ranking, robust across all phases) ===
+        # Top CUT_TOP_N + ties on 2-round (R1+R2) total. That total is immutable once
+        # both rounds are done, so it's correct as a live projection in R1/R2, in the
+        # R2-done/R3-not-started window (ESPN stubs an empty R3 on the WHOLE field, so
+        # "has an R3 entry" is meaningless and ESPN never flags cuts), and through the
+        # weekend (the top-level score drifts with R3/R4, but r2_total never does).
+        # Deciding it here means missed-cut players are pulled OUT of the field before
+        # ranking — so their frozen scores can't pollute live positions/points on the
+        # weekend, and a made-cut player who balloons above the line still keeps their
+        # position-based points (minimum 2).
+        FINAL_ROUND = 4
+        tournament_over = target_period > FINAL_ROUND
+        weekend_started = any(g.get("weekend_holes") for g in raw_golfers)
+        two_round = sorted(g["r2_total"] for g in raw_golfers
+                           if g["status"] is None and g.get("r2_total") is not None)
+        projected_cut = two_round[CUT_TOP_N - 1] if len(two_round) >= CUT_TOP_N else None
+
+        def _missed_cut(g):
+            if g["status"] is not None:
+                return True  # WD/DQ/explicit cut
+            if projected_cut is None:
+                return False  # cut not yet determinable (early in R1/R2)
+            rt = g.get("r2_total")
+            if rt is not None:
+                return rt > projected_cut
+            # Hasn't finished 2 rounds (e.g. weather-delayed R1) — backstop on current
+            # score, only valid pre-weekend (score == 2-round total then).
+            if not weekend_started:
+                s = score_to_int(g["score"])
+                return s is not None and s > projected_cut
+            return False
+
+        active = [g for g in raw_golfers if not _missed_cut(g)]
+        out = [g for g in raw_golfers if _missed_cut(g)]
 
         pos = 1
         i = 0
@@ -394,11 +426,6 @@ def fetch_leaderboard():
                 active[k]["pos_str"] = f"T{pos:02d}" if tied else f"{pos:02d}"
             pos = j + 1
             i = j
-
-        # "In play" = still has golf to play right now (on the course or yet to tee
-        # off today) and not eliminated -> a participant's remaining scoring ammo.
-        FINAL_ROUND = 4
-        tournament_over = target_period > FINAL_ROUND
 
         for g in active:
             thru = g["thru"]
@@ -415,47 +442,18 @@ def fetch_leaderboard():
                 "r2_total": g.get("r2_total"), "weekend_holes": g.get("weekend_holes", False),
             })
 
-        for g in inactive:
+        for g in out:
+            label = g["status"] if g["status"] is not None else "CUT"
             golfers.append({
                 "name": g["name"], "name_norm": g["name_norm"],
-                "pos_str": g["status"] or "-", "pos_int": None,
-                "status": g["status"], "score": g["score"],
+                "pos_str": label, "pos_int": None,
+                "status": g["status"] or "CUT", "score": g["score"],
                 "today": g.get("today", "-"), "thru": g["thru"],
                 "tee_time": g.get("tee_time", ""),
                 "points": 0, "proj_mc": True, "in_play": False, "holes_left": 0,
             })
     except Exception as e:
         return None, f"Parse error: {e}", None
-
-    # === CUT (robust across all phases) ===
-    # The cut is the top CUT_TOP_N + ties on 2-round (R1+R2) total. That total is
-    # immutable once both rounds are complete, so this is correct as a live
-    # projection during R1/R2, in the R2-done/R3-not-started window (where ESPN
-    # stubs an empty R3 on the whole field), and through the weekend (the
-    # top-level score drifts with R3/R4, but r2_total never does).
-    projected_cut = None
-    two_round = sorted(g["r2_total"] for g in golfers
-                       if not g.get("status") and g.get("r2_total") is not None)
-    weekend_started = any(g.get("weekend_holes") for g in golfers)
-    if len(two_round) >= CUT_TOP_N:
-        projected_cut = two_round[CUT_TOP_N - 1]
-        for g in golfers:
-            if g.get("status"):
-                continue
-            rt = g.get("r2_total")
-            missed = rt is not None and rt > projected_cut
-            # Pre-weekend backstop: a golfer who hasn't finished 2 rounds yet (e.g. a
-            # weather-delayed R1) but is already worse than the line. Not applied once
-            # the weekend has started, because the top-level score then includes R3/R4.
-            if not missed and not weekend_started and rt is None:
-                s = score_to_int(g["score"])
-                if s is not None and s > projected_cut:
-                    missed = True
-            if missed:
-                g["proj_mc"] = True
-                g["points"] = 0
-                g["in_play"] = False
-                g["holes_left"] = 0
 
     return golfers, event_name, projected_cut
 
