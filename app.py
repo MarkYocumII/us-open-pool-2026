@@ -694,10 +694,17 @@ def render_rivalry(df_scores, participant_details):
     you_uniq = [you_map[n] for n in (set(you_map) - set(opp_map))]
     opp_uniq = [opp_map[n] for n in (set(opp_map) - set(you_map))]
 
-    you_uniq_pts = sum(g["Points"] for g in you_uniq)
-    opp_uniq_pts = sum(g["Points"] for g in opp_uniq)
-    you_live = sum(1 for g in you_uniq if g.get("_in_play"))
-    opp_live = sum(1 for g in opp_uniq if g.get("_in_play"))
+    # Drop cut players from the head-to-head display — they're locked at 0 and can't
+    # move the margin. (Cut players contribute 0, so the margin math is unchanged.)
+    you_alive = [g for g in you_uniq if not g.get("_proj_mc")]
+    opp_alive = [g for g in opp_uniq if not g.get("_proj_mc")]
+    you_cut = len(you_uniq) - len(you_alive)
+    opp_cut = len(opp_uniq) - len(opp_alive)
+
+    you_uniq_pts = sum(g["Points"] for g in you_alive)
+    opp_uniq_pts = sum(g["Points"] for g in opp_alive)
+    you_live = sum(1 for g in you_alive if g.get("_in_play"))
+    opp_live = sum(1 for g in opp_alive if g.get("_in_play"))
     margin = pts_map[you] - pts_map[opp]
     leader = you if margin > 0 else (opp if margin < 0 else "Tied")
 
@@ -707,8 +714,8 @@ def render_rivalry(df_scores, participant_details):
               delta_color="normal" if margin >= 0 else "inverse")
     m3.metric(f"{opp}  (#{rank_map[opp]})", f"{pts_map[opp]} pts")
 
-    st.caption(f"They share **{len(shared)}** golfers (identical points for both — they don't move the margin). "
-               f"Unique ammo still live → **{you}: {you_live}**  ·  **{opp}: {opp_live}**.")
+    st.caption(f"They share **{len(shared)}** golfers (cancel out). Showing only golfers **still in** "
+               f"(cut players hidden). Unique still live → **{you}: {you_live}** · **{opp}: {opp_live}**.")
 
     def side_df(uniq):
         rows = [{
@@ -723,10 +730,12 @@ def render_rivalry(df_scores, participant_details):
         return pd.DataFrame(rows).sort_values("Pts", ascending=False).reset_index(drop=True)
 
     l, r = st.columns(2)
-    l.markdown(f"**{you}'s edge** — {len(you_uniq)} unique · **{you_uniq_pts} pts**")
-    l.dataframe(side_df(you_uniq), use_container_width=True, hide_index=True, height=360)
-    r.markdown(f"**{opp}'s edge** — {len(opp_uniq)} unique · **{opp_uniq_pts} pts**")
-    r.dataframe(side_df(opp_uniq), use_container_width=True, hide_index=True, height=360)
+    l.markdown(f"**{you}'s edge** — {len(you_alive)} still in · **{you_uniq_pts} pts**"
+               + (f"  _(+{you_cut} cut)_" if you_cut else ""))
+    l.dataframe(side_df(you_alive), use_container_width=True, hide_index=True, height=360)
+    r.markdown(f"**{opp}'s edge** — {len(opp_alive)} still in · **{opp_uniq_pts} pts**"
+               + (f"  _(+{opp_cut} cut)_" if opp_cut else ""))
+    r.dataframe(side_df(opp_alive), use_container_width=True, hide_index=True, height=360)
 
 
 # === MAIN ===
