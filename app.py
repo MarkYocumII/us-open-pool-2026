@@ -404,12 +404,15 @@ def fetch_leaderboard():
             rt = g.get("r2_total")
             if rt is not None:
                 return rt > projected_cut
-            # Hasn't finished 2 rounds (e.g. weather-delayed R1) — backstop on current
-            # score, only valid pre-weekend (score == 2-round total then).
-            if not weekend_started:
-                s = score_to_int(g["score"])
-                return s is not None and s > projected_cut
-            return False
+            # No 2-round total. Pre-weekend, a player may simply not have finished
+            # 2 rounds yet (e.g. weather-delayed R1) — backstop on current score
+            # (score == 2-round total then). Once the weekend has started, every
+            # golfer playing on has a completed 2-round total, so a missing one
+            # means they withdrew / never finished 2 rounds → did NOT make the cut.
+            if weekend_started:
+                return True
+            s = score_to_int(g["score"])
+            return s is not None and s > projected_cut
 
         active = [g for g in raw_golfers if not _missed_cut(g)]
         out = [g for g in raw_golfers if _missed_cut(g)]
